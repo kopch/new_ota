@@ -15,20 +15,6 @@ services:
       - key: SUPABASE_ANON_KEY
         sync: false
 
-  # Database (PostgreSQL)
-  - type: pserv
-    name: listing-auditor-db
-    env: docker
-    dockerfilePath: ./supabase/Dockerfile
-    dockerContext: ./supabase
-    envVars:
-      - key: POSTGRES_PASSWORD
-        sync: false
-      - key: POSTGRES_DB
-        value: listing_auditor
-      - key: POSTGRES_USER
-        value: listing_auditor_user
-
 databases:
   - name: listing-auditor-postgres
     databaseName: listing_auditor

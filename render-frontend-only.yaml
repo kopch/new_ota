@@ -10,4 +10,8 @@ services:
         value: production
       - key: PUBLIC_SITE_URL
         value: https://listing-auditor-frontend.onrender.com
+      - key: SUPABASE_PUBLIC_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
 
