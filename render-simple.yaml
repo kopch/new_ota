@@ -1,0 +1,36 @@
+services:
+  # Frontend Vue.js приложение
+  - type: web
+    name: listing-auditor-frontend
+    env: node
+    buildCommand: cd apps/web && npm install && npm run build
+    startCommand: cd apps/web && npm run preview
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PUBLIC_SITE_URL
+        value: https://listing-auditor-frontend.onrender.com
+      - key: SUPABASE_PUBLIC_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+
+  # Database (PostgreSQL)
+  - type: pserv
+    name: listing-auditor-db
+    env: docker
+    dockerfilePath: ./supabase/Dockerfile
+    dockerContext: ./supabase
+    envVars:
+      - key: POSTGRES_PASSWORD
+        sync: false
+      - key: POSTGRES_DB
+        value: listing_auditor
+      - key: POSTGRES_USER
+        value: listing_auditor_user
+
+databases:
+  - name: listing-auditor-postgres
+    databaseName: listing_auditor
+    user: listing_auditor_user
+

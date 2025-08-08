@@ -1,0 +1,360 @@
+{
+  "name": "Listing Audit Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "listing-audit",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "listing-audit-webhook"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.*, l.* FROM projects p JOIN listings l ON p.id = l.project_id WHERE p.id = $1",
+        "additionalFields": {
+          "queryReplacement": "={{ $json.project_id }}"
+        }
+      },
+      "id": "get-project-data",
+      "name": "Get Project Data",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [460, 300],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "combine-listings",
+      "name": "Combine Listings",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": {
+          "waitUntil": "networkidle",
+          "timeout": 30000,
+          "fullPage": false,
+          "viewport": {
+            "width": 1920,
+            "height": 1080
+          }
+        }
+      },
+      "id": "scrape-listing",
+      "name": "Scrape Listing",
+      "type": "n8n-nodes-base.browserless",
+      "typeVersion": 1,
+      "position": [900, 300],
+      "credentials": {
+        "browserless": {
+          "id": "browserless-credentials",
+          "name": "Browserless"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract listing data from scraped page\nconst page = $input.first().json;\nconst url = $('Get Project Data').item.json.url;\nconst platform = $('Get Project Data').item.json.platform;\n\nlet listingData = {\n  url: url,\n  platform: platform,\n  title: '',\n  description: '',\n  price: 0,\n  rating: 0,\n  review_count: 0,\n  image_urls: [],\n  amenities: []\n};\n\n// Platform-specific extraction logic\nif (platform === 'airbnb') {\n  // Airbnb specific selectors\n  listingData.title = page.querySelector('h1')?.textContent?.trim() || '';\n  listingData.description = page.querySelector('[data-section-id=\"DESCRIPTION_DEFAULT\"]')?.textContent?.trim() || '';\n  \n  // Extract price\n  const priceElement = page.querySelector('[data-section-id=\"PRICE_DEFAULT\"] span');\n  if (priceElement) {\n    const priceText = priceElement.textContent?.replace(/[^0-9]/g, '') || '0';\n    listingData.price = parseInt(priceText);\n  }\n  \n  // Extract rating\n  const ratingElement = page.querySelector('[aria-label*=\"rating\"]');\n  if (ratingElement) {\n    const ratingText = ratingElement.textContent?.match(/\\d+(\\.\\d+)?/)?.[0] || '0';\n    listingData.rating = parseFloat(ratingText);\n  }\n  \n  // Extract images\n  const imageElements = page.querySelectorAll('img[src*=\"a0.muscache.com\"]');\n  listingData.image_urls = Array.from(imageElements).map(img => img.src).slice(0, 10);\n  \n  // Extract amenities\n  const amenityElements = page.querySelectorAll('[data-section-id=\"AMENITIES_DEFAULT\"] li');\n  listingData.amenities = Array.from(amenityElements).map(li => li.textContent?.trim()).filter(Boolean);\n}\n\n// Add more platform-specific logic for VRBO, Booking.com, etc.\n\nreturn listingData;"
+      },
+      "id": "extract-listing-data",
+      "name": "Extract Listing Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "table": "listings",
+        "updateKey": "id",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "title": "={{ $json.title }}",
+            "description": "={{ $json.description }}",
+            "price": "={{ $json.price }}",
+            "rating": "={{ $json.rating }}",
+            "review_count": "={{ $json.review_count }}",
+            "image_urls": "={{ $json.image_urls }}",
+            "amenities": "={{ $json.amenities }}"
+          },
+          "matchingColumns": {
+            "id": "={{ $('Get Project Data').item.json.id }}"
+          }
+        }
+      },
+      "id": "update-listing",
+      "name": "Update Listing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1340, 300],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.manus.ai/v1/analyze",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.MANUS_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "listing_data",
+              "value": "={{ JSON.stringify($json) }}"
+            },
+            {
+              "name": "analysis_type",
+              "value": "vacation_rental_audit"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ai-analysis",
+      "name": "AI Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process AI analysis results\nconst analysis = $input.first().json;\nconst listingId = $('Get Project Data').item.json.id;\n\n// Extract scores and insights from AI response\nconst auditReport = {\n  listing_id: listingId,\n  overall_score: analysis.overall_score || 0,\n  content_score: analysis.content_score || 0,\n  visual_score: analysis.visual_score || 0,\n  pricing_score: analysis.pricing_score || 0,\n  marketing_score: analysis.marketing_score || 0,\n  strengths: analysis.strengths || [],\n  weaknesses: analysis.weaknesses || [],\n  recommendations: analysis.recommendations || [],\n  screenshots: []\n};\n\nreturn auditReport;"
+      },
+      "id": "process-analysis",
+      "name": "Process Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "audit_reports",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "listing_id": "={{ $json.listing_id }}",
+            "overall_score": "={{ $json.overall_score }}",
+            "content_score": "={{ $json.content_score }}",
+            "visual_score": "={{ $json.visual_score }}",
+            "pricing_score": "={{ $json.pricing_score }}",
+            "marketing_score": "={{ $json.marketing_score }}",
+            "strengths": "={{ $json.strengths }}",
+            "weaknesses": "={{ $json.weaknesses }}",
+            "recommendations": "={{ $json.recommendations }}",
+            "screenshots": "={{ $json.screenshots }}"
+          }
+        }
+      },
+      "id": "save-report",
+      "name": "Save Report",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [2000, 300],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "table": "projects",
+        "updateKey": "id",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "completed"
+          },
+          "matchingColumns": {
+            "id": "={{ $('Get Project Data').item.json.project_id }}"
+          }
+        }
+      },
+      "id": "update-project-status",
+      "name": "Update Project Status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [2220, 300],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"completed\",\n  \"message\": \"Audit completed successfully\",\n  \"project_id\": \"={{ $('Get Project Data').item.json.project_id }}\"\n}"
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2440, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Project Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Project Data": {
+      "main": [
+        [
+          {
+            "node": "Combine Listings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Listings": {
+      "main": [
+        [
+          {
+            "node": "Scrape Listing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape Listing": {
+      "main": [
+        [
+          {
+            "node": "Extract Listing Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Listing Data": {
+      "main": [
+        [
+          {
+            "node": "Update Listing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Listing": {
+      "main": [
+        [
+          {
+            "node": "AI Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Analysis": {
+      "main": [
+        [
+          {
+            "node": "Process Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Analysis": {
+      "main": [
+        [
+          {
+            "node": "Save Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Report": {
+      "main": [
+        [
+          {
+            "node": "Update Project Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Project Status": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "listing-audit-workflow",
+  "tags": []
+}

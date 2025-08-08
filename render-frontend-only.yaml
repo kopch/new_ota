@@ -1,0 +1,13 @@
+services:
+  # Frontend Vue.js приложение
+  - type: web
+    name: listing-auditor-frontend
+    env: node
+    buildCommand: cd apps/web && npm install && npm run build
+    startCommand: cd apps/web && npm run preview
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PUBLIC_SITE_URL
+        value: https://listing-auditor-frontend.onrender.com
+

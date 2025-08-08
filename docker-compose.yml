@@ -1,0 +1,155 @@
+version: "3.9"
+
+services:
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    env_file:
+      - ./.env
+    environment:
+      - VITE_SUPABASE_URL=${SUPABASE_PUBLIC_URL}
+      - VITE_SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - VITE_STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY}
+    ports:
+      - "8080:80"
+    depends_on:
+      - supabase-kong
+    restart: unless-stopped
+
+  n8n:
+    image: n8nio/n8n:1.71.2
+    env_file:
+      - ./.env
+    environment:
+      - N8N_HOST=${N8N_HOST}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=${N8N_PROTOCOL}
+      - WEBHOOK_URL=${N8N_WEBHOOK_URL}
+      - N8N_EDITOR_BASE_URL=${N8N_WEBHOOK_URL}
+      - GENERIC_TIMEZONE=${TIMEZONE}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - SUPABASE_PUBLIC_URL=${SUPABASE_PUBLIC_URL}
+      - MANUS_API_KEY=${MANUS_API_KEY}
+      - STRIPE_API_KEY=${STRIPE_API_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      - BROWSERLESS_URL=${BROWSERLESS_URL}
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/home/node/.n8n/workflows
+    depends_on:
+      - supabase-db
+    restart: unless-stopped
+
+  browserless:
+    image: browserless/chrome:1.61-chrome-stable
+    environment:
+      - MAX_CONCURRENT_SESSIONS=5
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+  # --- Supabase self-hosted (simplified) ---
+  supabase-db:
+    image: supabase/postgres:15.1.1.90
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - JWT_SECRET=${SUPABASE_JWT_SECRET}
+    volumes:
+      - supabase_db_data:/var/lib/postgresql/data
+      - ./supabase/init:/docker-entrypoint-initdb.d
+    restart: unless-stopped
+
+  supabase-auth:
+    image: supabase/gotrue:v2.148.2
+    depends_on:
+      - supabase-db
+    environment:
+      - GOTRUE_JWT_SECRET=${SUPABASE_JWT_SECRET}
+      - GOTRUE_SITE_URL=${PUBLIC_SITE_URL}
+      - GOTRUE_API_HOST=0.0.0.0
+      - GOTRUE_DB_DRIVER=postgres
+      - GOTRUE_DB_DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@supabase-db:5432/${POSTGRES_DB}
+      - GOTRUE_DISABLE_SIGNUP=false
+      - GOTRUE_EXTERNAL_GOOGLE_ENABLED=${AUTH_GOOGLE_ENABLED}
+      - GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID=${AUTH_GOOGLE_CLIENT_ID}
+      - GOTRUE_EXTERNAL_GOOGLE_SECRET=${AUTH_GOOGLE_CLIENT_SECRET}
+      - GOTRUE_MAILER_AUTOCONFIRM=${AUTH_AUTOCONFIRM}
+    restart: unless-stopped
+
+  supabase-rest:
+    image: postgrest/postgrest:v12.1.0
+    depends_on:
+      - supabase-db
+    environment:
+      - PGRST_DB_URI=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@supabase-db:5432/${POSTGRES_DB}
+      - PGRST_DB_ANON_ROLE=anon
+      - PGRST_DB_SCHEMAS=public
+      - PGRST_JWT_SECRET=${SUPABASE_JWT_SECRET}
+    restart: unless-stopped
+
+  supabase-storage:
+    image: supabase/storage-api:v0.51.7
+    depends_on:
+      - supabase-db
+      - supabase-auth
+    environment:
+      - ANON_KEY=${SUPABASE_ANON_KEY}
+      - SERVICE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - POSTGREST_URL=http://supabase-rest:3000
+      - PGRST_JWT_SECRET=${SUPABASE_JWT_SECRET}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@supabase-db:5432/${POSTGRES_DB}
+    restart: unless-stopped
+
+  supabase-realtime:
+    image: supabase/realtime:v2.26.12
+    depends_on:
+      - supabase-db
+    environment:
+      - DB_HOST=supabase-db
+      - DB_NAME=${POSTGRES_DB}
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      - JWT_SECRET=${SUPABASE_JWT_SECRET}
+    restart: unless-stopped
+
+  supabase-kong:
+    image: supabase/kong:2.8.1
+    depends_on:
+      - supabase-auth
+      - supabase-rest
+      - supabase-realtime
+      - supabase-storage
+    ports:
+      - "8000:8000"
+    environment:
+      - KONG_DATABASE=off
+      - KONG_DECLARATIVE_CONFIG=/var/lib/kong/kong.yml
+      - KONG_DNS_ORDER=LAST,A,CNAME
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
+    volumes:
+      - ./supabase/kong.yml:/var/lib/kong/kong.yml:ro
+    restart: unless-stopped
+
+volumes:
+  n8n_data:
+  supabase_db_data:
+
+networks:
+  default:
+    name: listing-auditor-net
+
+
