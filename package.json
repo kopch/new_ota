@@ -1,0 +1,12 @@
+{
+  "name": "listing-auditor-ai",
+  "version": "1.0.0",
+  "description": "AI-powered listing auditor with Vue.js frontend",
+  "scripts": {
+    "build": "cd apps/web && npm install && npm run build",
+    "start": "cd apps/web && npm run preview"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
